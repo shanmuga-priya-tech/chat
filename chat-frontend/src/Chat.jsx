@@ -3,59 +3,113 @@ import { createSocketConnection } from "../utils/socket";
 
 function Chat() {
   const [msg, setMsg] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [room, setRoom] = useState("");
-  const [username, setUsername] = useState("");
-  const [showChat, setShowChat] = useState(false);
+  const [roomName, setRoomName] = useState(
+    localStorage.getItem("roomName") || ""
+  );
+  const [userName, setUserName] = useState(
+    localStorage.getItem("userName") || ""
+  );
+  const [prevMsgs, setPrevMsgs] = useState([]);
+  const [showChat, setShowChat] = useState(
+    localStorage.getItem("showChat") === "true"
+  );
 
+  //useRefs for referencing div
   const socketRef = useRef(null); // ✅ Store socket instance in a ref
+  const messagesContainerRef = useRef(null);
 
-  // console.log(messages);
+  //fn to move older msgs automatically when new msgs are added
+  const scrollToBottom = () => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop =
+        messagesContainerRef.current.scrollHeight;
+    }
+  };
+
+  // 🔴 Auto-scroll to latest message when messages update
+  useEffect(() => {
+    scrollToBottom();
+  }, [prevMsgs]);
 
   useEffect(() => {
-    socketRef.current = createSocketConnection(); // ✅ Create socket once
-    const socket = socketRef.current;
+    if (showChat && roomName && userName) {
+      socketRef.current = createSocketConnection();
+      const socket = socketRef.current;
 
-    socket.on("messageReceived", ({ message, username }) => {
-      setMessages((prev) => [...prev, { message, username }]);
-    });
+      socket.emit("joinRoom", { roomName, userName });
 
-    return () => {
-      socket.disconnect(); // ✅ Disconnect only on unmount
-    };
-  }, []);
+      socket.on("roomJoined", ({ messages }) => {
+        const formattedMessages = messages.map((msg) => ({
+          userName: msg.message.userName,
+          msg: msg.message.msg,
+          createdAt: msg.createdAt,
+        }));
+        setPrevMsgs(formattedMessages);
+      });
+
+      socket.on("messageReceived", ({ userName, msg, createdAt }) => {
+        setPrevMsgs((prev) =>
+          [...prev, { userName, msg, createdAt }].slice(-50)
+        );
+        setTimeout(scrollToBottom, 100);
+      });
+
+      return () => {
+        socket.disconnect();
+      };
+    }
+  }, [showChat, roomName, userName]);
 
   const joinRoom = () => {
-    if (room && username) {
-      socketRef.current.emit("joinRoom", { room, username });
-      socketRef.current.on("usernameError", (error) => alert(error));
-      socketRef.current.on("roomJoined", () => {
-        setShowChat(true);
-      });
-    }
+    localStorage.setItem("roomName", roomName);
+    localStorage.setItem("userName", userName);
+    localStorage.setItem("showChat", "true");
+
+    socketRef?.current?.on("error", (error) => console.log(error));
+
+    setShowChat(true);
   };
 
   const sendMessage = () => {
     if (msg) {
-      socketRef.current.emit("sendMessage", { room, message: msg, username });
+      socketRef.current.emit("sendMessage", {
+        roomName,
+        msg,
+        userName,
+      });
       setMsg("");
+    }
+  };
+
+  const leaveChat = () => {
+    localStorage.removeItem("roomName");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("showChat");
+
+    setRoomName("");
+    setUserName("");
+    setPrevMsgs([]);
+    setShowChat(false);
+
+    if (socketRef.current) {
+      socketRef.current.disconnect();
     }
   };
 
   return (
     <div className="flex justify-center gap-4 flex-col w-[700px] mx-auto">
       {!showChat && (
-        <div className="flex justify-between">
+        <div className="flex justify-between ">
           <input
             className="p-4 text-green-700 bg-green-100 outline-green-600 rounded-xl text-xl"
-            value={room}
-            onChange={(e) => setRoom(e.target.value)}
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
             placeholder="Enter Room Name"
           />
           <input
             className="p-4 bg-green-100 outline-green-600 rounded-xl text-xl text-green-700"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
             placeholder="Enter Your Name"
           />
           <button
@@ -67,18 +121,25 @@ function Chat() {
         </div>
       )}
       {showChat && (
-        <div className="flex flex-col border border-gray-500 h-[70vh] w-[650px] rounded-lg">
-          <div className="flex-1 ">
-            {messages.map((msg, i) => (
+        <div className="flex flex-col border border-gray-500 h-[80vh] w-[650px] rounded-lg">
+          <div className="flex font-bold text-3xl bg-green-50 p-2 text-pink-600 capitalize justify-center ">
+            {roomName} Room
+          </div>
+          <div
+            className="flex-1 overflow-y-auto h-[60vh] px-4"
+            ref={messagesContainerRef}
+          >
+            {prevMsgs?.map((msg, i) => (
               <div
                 key={i}
                 className="p-4 mx-2 my-4 flex justify-start border border-green-600 rounded-xl bg-green-50 text-lg w-fit max-w-[80%]"
               >
-                <strong className="text-black">{msg.username}: </strong>
-                {msg.message}
+                <strong className="text-black pr-2">{msg.userName}: </strong>
+                {msg.msg}
               </div>
             ))}
           </div>
+
           <div className="px-5 pb-5 flex gap-5 justify-center">
             <input
               className="p-4 flex-1 bg-green-100 border-2 outline-green-600 border-green-600 rounded-xl text-xl"
@@ -91,6 +152,12 @@ function Chat() {
               onClick={sendMessage}
             >
               Send
+            </button>
+            <button
+              className="py-3 px-5 rounded-2xl cursor-pointer bg-red-700 hover:bg-red-600 font-mono text-xl text-white"
+              onClick={leaveChat}
+            >
+              Leave Chat
             </button>
           </div>
         </div>
